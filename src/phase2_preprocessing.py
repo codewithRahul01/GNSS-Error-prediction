@@ -55,9 +55,7 @@
     pip install pandas numpy scipy scikit-learn joblib tabulate
 """
 
-# =============================================================================
 # IMPORTS
-# =============================================================================
 
 import os
 import sys
@@ -71,9 +69,8 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 from tabulate import tabulate
 
-# =============================================================================
+
 # PATHS — auto-detected from this file's location
-# =============================================================================
 
 SRC_DIR  = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
@@ -89,9 +86,7 @@ for _d in ["Data", "data"]:
 RES_DIR  = os.path.join(BASE_DIR, "results")
 os.makedirs(RES_DIR, exist_ok=True)
 
-# =============================================================================
 # CONSTANTS
-# =============================================================================
 
 ERR_COLS = ["x_error", "y_error", "z_error", "clock_error"]
 
@@ -106,9 +101,7 @@ SCALE_COLS = ["t_min",
               "sin_halfd", "cos_halfd"] + ERR_COLS
 
 
-# =============================================================================
 # STEP 1 — LOAD
-# =============================================================================
 
 def load_processed(filename: str) -> pd.DataFrame:
     """
@@ -139,9 +132,8 @@ def load_processed(filename: str) -> pd.DataFrame:
     return df.sort_values("utc_time").reset_index(drop=True)
 
 
-# =============================================================================
 # STEP 2 — WINSORIZE OUTLIERS
-# =============================================================================
+
 
 def winsorize(df: pd.DataFrame,
               cols: list = None,
@@ -196,9 +188,7 @@ def winsorize(df: pd.DataFrame,
     return df, bounds
 
 
-# =============================================================================
 # STEP 3 — ADD t_min
-# =============================================================================
 
 def add_t_min(df: pd.DataFrame,
               t_ref: pd.Timestamp = None) -> tuple:

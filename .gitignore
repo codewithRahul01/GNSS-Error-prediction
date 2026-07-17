@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Jupyter notebooks (keep only .py scripts)
+.ipynb_checkpoints/
+
+# Large data files (upload manually or document download steps)
+Data/Raw/*.csv
+Data/Raw/*.xlsx
+Data/Raw/*.zip
+
+# Auto-generated processed data (recreated by running phase scripts)
+Data/Processed/
+
+# Saved ML models (large binary files — recreate by running phases)
+results/*.pkl
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Test outputs
+results/phase7_self_test/
+
+# KEEP these (commit them):
+# requirements.txt
+# src/*.py
+# results/*.csv        (predictions and scores — small files)
+# results/*.txt        (submission summary)
+# figures/*.png        (all plots)
+# README.md
+# .gitignore
