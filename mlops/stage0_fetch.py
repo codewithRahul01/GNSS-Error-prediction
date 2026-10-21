@@ -22,6 +22,7 @@ Satellite mapping (IRNSS PRN → your pipeline IDs):
 import sys, os, re, gzip, math, struct, hashlib, argparse, logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen, HTTPPasswordMgrWithDefaultRealm, \
     HTTPBasicAuthHandler, build_opener, install_opener
 from urllib.error import URLError, HTTPError
@@ -52,6 +53,16 @@ C     = 2.99792458e8  # m/s
 F     = -4.442807633e-10  # relativistic correction factor
 
 DATA_DIR = ROOT / "Data" / "Raw"
+AUTH_HOSTS = {"cddis.nasa.gov", EARTHDATA_HOST}
+
+class CDDISAuthSession(requests.Session):
+    """Keep Basic auth across CDDIS↔Earthdata redirects only."""
+    def rebuild_auth(self, prepared_request, response):
+        old_host = urlparse(response.request.url).hostname or ""
+        new_host = urlparse(prepared_request.url).hostname or ""
+        if old_host in AUTH_HOSTS and new_host in AUTH_HOSTS:
+            return
+        return super().rebuild_auth(prepared_request, response)
 
 # ── auth setup ───────────────────────────────────────────────────────────────
 def setup_auth():
@@ -82,14 +93,15 @@ def download(url: str, dest: Path, user: str, pwd: str) -> Path:
     requests with a Session handles the redirect + Basic Auth automatically.
     """
     log.info(f"Downloading {url}")
-    session = requests.Session()
+    session = CDDISAuthSession()
     session.auth = (user, pwd)
 
     try:
         resp = session.get(url, timeout=120, allow_redirects=True)
 
-        # detect HTML auth error page
-        if resp.headers.get("Content-Type", "").startswith("text/html"):
+        # detect HTML auth/error page (even when content-type is wrong)
+        body_head = resp.content[:200].lstrip().lower()
+        if resp.headers.get("Content-Type", "").startswith("text/html") or body_head.startswith(b"<!doctype html"):
             log.error("Got HTML response — auth failed or file not found")
             log.error(f"HTTP {resp.status_code}: {url}")
             if resp.status_code in (401, 403):
