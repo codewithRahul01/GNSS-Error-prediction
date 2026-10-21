@@ -1,0 +1,18 @@
+{
+  "winsor_k": 3.0,
+  "feat_cols": [
+    "t_min",
+    "x_error",
+    "y_error",
+    "z_error",
+    "clock_error"
+  ],
+  "raw_rows": 142,
+  "satellite_id": "GEO_A",
+  "satellite_type": "GEO",
+  "t_ref": "2025-09-03 00:01:00",
+  "rows": 86,
+  "processed_at": "2026-10-03T02:04:52.087399+00:00",
+  "scaler_path": "/Users/rahuljangra/Downloads/SIH Project /GNSS-Error-prediction/mlops/artifacts/scaler_geoa.pkl",
+  "csv_path": "/Users/rahuljangra/Downloads/SIH Project /GNSS-Error-prediction/mlops/artifacts/train_geoa.csv"
+}

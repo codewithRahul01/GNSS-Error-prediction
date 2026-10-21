@@ -1,0 +1,281 @@
+name: GNSS Daily Pipeline
+
+on:
+  schedule:
+    - cron: '30 18 * * *'   # 00:00 IST (18:30 UTC) every day
+  push:
+    paths:
+      - 'Data/**'            # also runs when new CSV data is pushed
+  workflow_dispatch:         # manual trigger from GitHub UI
+
+env:
+  GNSS_MODEL_TYPE: gp        # switch to: lstm | transformer when data > 2000 rows
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 0 — Auto-fetch yesterday's IRNSS data
+  # ─────────────────────────────────────────────
+  fetch-data:
+    name: Fetch IRNSS data from NASA CDDIS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r Requirements.txt
+
+      - name: Stage 0 — Fetch daily RINEX from CDDIS
+        run: python3 mlops/stage0_fetch.py
+        env:
+          EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
+          EARTHDATA_PASS: ${{ secrets.EARTHDATA_PASS }}
+
+      - name: Upload fetched CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-data-today
+          path: Data/Raw/irnss_*.csv
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — Ingest + Validate + Preprocess
+  # ─────────────────────────────────────────────
+  ingest-and-preprocess:
+    name: Ingest → Validate → Preprocess
+    runs-on: ubuntu-latest
+    needs: fetch-data
+    outputs:
+      new_rows: ${{ steps.ingest.outputs.new_rows }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r Requirements.txt
+
+      - name: Download fetched CSV
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-data-today
+          path: Data/Raw/
+
+      - name: Restore database from cache
+        uses: actions/cache@v4
+        with:
+          path: mlops/database/gnss.db
+          key: gnss-db-${{ github.run_number }}
+          restore-keys: gnss-db-
+
+      - name: Restore artifacts from cache
+        uses: actions/cache@v4
+        with:
+          path: mlops/artifacts/
+          key: gnss-artifacts-${{ github.run_number }}
+          restore-keys: gnss-artifacts-
+
+      - name: Stage 1 — Ingest new CSV files
+        id: ingest
+        run: |
+          python3 mlops/stage1_ingestion.py --mode seed --data-dir Data/Raw
+          COUNT=$(python3 -c "
+          import sqlite3, sys
+          sys.path.insert(0,'.')
+          con = sqlite3.connect('mlops/database/gnss.db')
+          n = con.execute('SELECT COUNT(*) FROM gnss_errors').fetchone()[0]
+          print(n)
+          ")
+          echo "new_rows=$COUNT" >> $GITHUB_OUTPUT
+          echo "Total rows in DB: $COUNT"
+
+      - name: Stage 2 — Validate schema
+        run: python3 mlops/stage2_validation.py
+
+      - name: Stage 3 — Preprocess
+        run: python3 mlops/stage3_preprocessing.py
+
+      - name: Upload DB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnss-db
+          path: mlops/database/gnss.db
+          retention-days: 30
+
+      - name: Upload preprocessing artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnss-artifacts
+          path: mlops/artifacts/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Retrain models
+  # ─────────────────────────────────────────────
+  retrain:
+    name: Retrain GP Models
+    runs-on: ubuntu-latest
+    needs: ingest-and-preprocess
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r Requirements.txt
+
+      - name: Download DB
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-db
+          path: mlops/database/
+
+      - name: Download preprocessing artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-artifacts
+          path: mlops/artifacts/
+
+      - name: Stage 4 — Retrain
+        run: |
+          GNSS_MODEL_TYPE=${{ env.GNSS_MODEL_TYPE }} python3 mlops/stage4_retrain.py
+        env:
+          GNSS_MODEL_TYPE: ${{ env.GNSS_MODEL_TYPE }}
+
+      - name: Upload updated DB
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnss-db-trained
+          path: mlops/database/gnss.db
+
+      - name: Upload model files
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnss-models
+          path: mlops/models/
+          retention-days: 90
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — Monitor + Alert
+  # ─────────────────────────────────────────────
+  monitor-and-alert:
+    name: Monitor → Alert
+    runs-on: ubuntu-latest
+    needs: retrain
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r Requirements.txt
+
+      - name: Download trained DB
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-db-trained
+          path: mlops/database/
+
+      - name: Download model files
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-models
+          path: mlops/models/
+
+      - name: Download preprocessing artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-artifacts
+          path: mlops/artifacts/
+
+      - name: Stage 6 — Monitor quality
+        run: python3 mlops/stage6_monitoring.py run
+
+      - name: Stage 7 — Send alerts (with auto-retrain if critical)
+        run: python3 mlops/stage7_alerting.py run --auto-retrain
+        env:
+          GNSS_EMAIL_FROM:   ${{ secrets.GNSS_EMAIL_FROM }}
+          GNSS_EMAIL_TO:     ${{ secrets.GNSS_EMAIL_TO }}
+          GNSS_SMTP_HOST:    ${{ secrets.GNSS_SMTP_HOST }}
+          GNSS_SMTP_PORT:    ${{ secrets.GNSS_SMTP_PORT }}
+          GNSS_SMTP_USER:    ${{ secrets.GNSS_SMTP_USER }}
+          GNSS_SMTP_PASS:    ${{ secrets.GNSS_SMTP_PASS }}
+          GNSS_SLACK_WEBHOOK: ${{ secrets.GNSS_SLACK_WEBHOOK }}
+
+      - name: Show monitoring summary
+        run: python3 mlops/stage6_monitoring.py status
+
+  # ─────────────────────────────────────────────
+  # JOB 4 — Commit models + DB back to repo
+  # ─────────────────────────────────────────────
+  commit-results:
+    name: Commit updated models
+    runs-on: ubuntu-latest
+    needs: monitor-and-alert
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download trained DB
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-db-trained
+          path: mlops/database/
+
+      - name: Download model files
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-models
+          path: mlops/models/
+
+      - name: Download preprocessing artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: gnss-artifacts
+          path: mlops/artifacts/
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add mlops/database/gnss.db mlops/models/ mlops/artifacts/
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — models unchanged."
+          else
+            DATE=$(date -u '+%Y-%m-%d %H:%M UTC')
+            git commit -m "chore: daily retrain $DATE [skip ci]"
+            git push
+          fi

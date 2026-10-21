@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>GNSS Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --muted:     #8b949e;
+  --ok:        #3fb950;
+  --warn:      #e3b341;
+  --critical:  #f85149;
+  --accent:    #58a6ff;
+  --radius:    8px;
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+
+/* ── Layout ── */
+.shell{max-width:1200px;margin:0 auto;padding:24px 16px}
+
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo svg{flex-shrink:0}
+.logo-text h1{font-size:18px;font-weight:700;letter-spacing:-.3px}
+.logo-text p{font-size:12px;color:var(--muted);margin-top:2px}
+
+.api-pill{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:4px 12px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.dot.live{background:var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+h2{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;
+   letter-spacing:.8px;margin-bottom:14px}
+
+/* ── Grid helpers ── */
+.row{display:grid;gap:16px;margin-bottom:20px}
+.col3{grid-template-columns:repeat(3,1fr)}
+.col2{grid-template-columns:2fr 1fr}
+.col21{grid-template-columns:1fr 1fr}
+@media(max-width:700px){.col3,.col2,.col21{grid-template-columns:1fr}}
+
+/* ── Card ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.card-sm{padding:16px}
+
+/* ── Stat tile ── */
+.tile{border-left:3px solid var(--border)}
+.tile.ok{border-color:var(--ok)}
+.tile.warning{border-color:var(--warn)}
+.tile.critical{border-color:var(--critical)}
+
+.tile-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.sat-name{font-size:13px;font-weight:600}
+.sat-type{font-size:11px;color:var(--muted);margin-top:2px}
+.status-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;text-transform:uppercase}
+.status-badge.ok{background:#1c3326;color:var(--ok)}
+.status-badge.warning{background:#2d2009;color:var(--warn)}
+.status-badge.critical{background:#2d0d0d;color:var(--critical)}
+
+.sw-row{display:flex;align-items:baseline;gap:6px;margin-bottom:10px}
+.sw-val{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.sw-label{font-size:12px;color:var(--muted)}
+
+.gauge-track{height:6px;background:var(--border);border-radius:3px;margin-bottom:10px}
+.gauge-fill{height:100%;border-radius:3px;transition:width .6s ease}
+
+.tile-meta{display:flex;gap:16px;flex-wrap:wrap}
+.meta-item{font-size:11px;color:var(--muted)}
+.meta-item span{color:var(--text);font-weight:500}
+
+/* ── Chart card ── */
+.chart-wrap{position:relative;height:220px}
+
+/* ── Column bars ── */
+.col-bars{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.col-row{display:flex;align-items:center;gap:10px}
+.col-name{width:76px;font-size:12px;color:var(--muted);flex-shrink:0}
+.col-track{flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.col-fill{height:100%;border-radius:4px;transition:width .5s ease}
+.col-val{width:40px;font-size:12px;font-variant-numeric:tabular-nums;text-align:right}
+
+/* ── Table ── */
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;
+   font-weight:600;padding:6px 10px;border-bottom:1px solid var(--border);text-align:left}
+td{padding:8px 10px;border-bottom:1px solid #1c2128;font-size:13px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#1c2128}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;
+  border-radius:10px;text-transform:uppercase}
+.badge.production{background:#1c3326;color:var(--ok)}
+.badge.staging{background:#1c2535;color:var(--accent)}
+.badge.archived{background:#1c1c1c;color:var(--muted)}
+.badge.warning{background:#2d2009;color:var(--warn)}
+.badge.ok{background:#1c3326;color:var(--ok)}
+.badge.critical{background:#2d0d0d;color:var(--critical)}
+
+/* ── Predict form ── */
+.pred-form{display:flex;flex-direction:column;gap:12px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500}
+select,input,textarea{
+  width:100%;background:#0d1117;border:1px solid var(--border);border-radius:6px;
+  color:var(--text);font-size:13px;padding:8px 10px;font-family:var(--font);
+  outline:none;transition:border-color .2s}
+select:focus,input:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;min-height:80px;font-family:monospace;font-size:12px}
+button{background:var(--accent);color:#0d1117;border:none;border-radius:6px;
+  padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:default}
+.btn-secondary{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+
+.pred-result{margin-top:14px}
+.pred-result pre{background:#0d1117;border:1px solid var(--border);border-radius:6px;
+  padding:14px;font-size:12px;overflow-x:auto;color:var(--ok);line-height:1.6}
+.error-msg{color:var(--critical);font-size:12px;margin-top:8px;padding:8px 10px;
+  background:#2d0d0d;border-radius:6px}
+
+/* ── Benchmark bar ── */
+.bench-row{display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:14px;
+  border-top:1px solid var(--border)}
+.bench-label{font-size:11px;color:var(--muted);width:80px;flex-shrink:0}
+.bench-track{flex:1;height:6px;background:var(--border);border-radius:3px;position:relative}
+.bench-fill{height:100%;border-radius:3px;background:var(--accent)}
+.bench-marker{position:absolute;top:-4px;width:2px;height:14px;background:var(--warn);border-radius:1px}
+.bench-val{font-size:11px;color:var(--muted);width:36px;text-align:right}
+
+/* ── Alert timeline ── */
+.alert-list{display:flex;flex-direction:column;gap:8px}
+.alert-item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+  background:#0d1117;border-radius:6px;border-left:3px solid var(--border)}
+.alert-item.warning{border-color:var(--warn)}
+.alert-item.critical{border-color:var(--critical)}
+.alert-icon{font-size:14px;flex-shrink:0;margin-top:1px}
+.alert-body{flex:1;min-width:0}
+.alert-title{font-size:13px;font-weight:600}
+.alert-detail{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.5}
+
+/* ── Refresh ── */
+.refresh-bar{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.refresh-bar small{color:var(--muted);font-size:11px}
+
+/* ── Tooltip ── */
+.tooltip-box{background:#1c2128;border:1px solid var(--border);border-radius:6px;
+  padding:8px 12px;font-size:12px;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">
+    <svg width="36" height="36" viewBox="0 0 36 36">
+      <circle cx="18" cy="18" r="17" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+      <circle cx="18" cy="18" r="6" fill="none" stroke="#58a6ff" stroke-width="1.5"/>
+      <ellipse cx="18" cy="18" rx="17" ry="7" fill="none" stroke="#58a6ff" stroke-width="1" opacity=".5" transform="rotate(-30 18 18)"/>
+      <circle cx="18" cy="11" r="2" fill="#3fb950"/>
+      <circle cx="27" cy="22" r="1.5" fill="#e3b341"/>
+    </svg>
+    <div class="logo-text">
+      <h1>GNSS Error Monitor</h1>
+      <p>SIH 2025 — ISRO Navigation Satellites · MLOps Pipeline</p>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="api-pill">
+      <div class="dot" id="api-dot"></div>
+      <span id="api-status">Connecting to API…</span>
+    </div>
+    <button class="btn-secondary" style="padding:5px 14px;font-size:12px" onclick="refreshAll()">↻ Refresh</button>
+  </div>
+</header>
+
+<!-- ── Satellite status tiles ── -->
+<h2>Satellite Health</h2>
+<div class="row col3" id="tiles-row">
+  <!-- injected by JS -->
+</div>
+
+<!-- ── SW_W chart + Alert timeline ── -->
+<div class="row col2" style="margin-bottom:20px">
+  <div class="card">
+    <h2>SW_W by Column</h2>
+    <div class="chart-wrap"><canvas id="swChart"></canvas></div>
+    <div class="bench-row">
+      <span class="bench-label">Benchmark</span>
+      <div class="bench-track">
+        <div class="bench-fill" style="width:100%"></div>
+        <div class="bench-marker" style="left:98.1%"></div>
+      </div>
+      <span class="bench-val">0.981</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Alert Timeline</h2>
+    <div class="alert-list" id="alert-list">
+      <div style="color:var(--muted);font-size:12px">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Predict form ── -->
+<div class="row col21" style="margin-bottom:20px">
+  <div class="card">
+    <h2>Live Prediction</h2>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Enter timestamps to get GP predictions from the running API (Stage 5).
+    </p>
+    <div class="pred-form">
+      <div class="form-row">
+        <div>
+          <label>Satellite</label>
+          <select id="pred-sat">
+            <option>GEO_A</option>
+            <option selected>MEO_B</option>
+            <option>MEO_C</option>
+          </select>
+        </div>
+        <div>
+          <label>Format</label>
+          <input id="pred-fmt" value="YYYY-MM-DD HH:MM:SS" readonly
+            style="color:var(--muted);cursor:default">
+        </div>
+      </div>
+      <div>
+        <label>Timestamps (one per line)</label>
+        <textarea id="pred-ts">2025-09-08 00:11:00
+2025-09-08 01:00:00
+2025-09-08 06:00:00</textarea>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="pred-btn" onclick="runPrediction()">Predict</button>
+        <button class="btn-secondary" onclick="clearPred()">Clear</button>
+      </div>
+      <div id="pred-output"></div>
+    </div>
+  </div>
+
+  <!-- Per-satellite column breakdown -->
+  <div class="card">
+    <h2>Per-Column SW_W</h2>
+    <div style="margin-bottom:14px">
+      <label style="display:block;margin-bottom:6px">Satellite</label>
+      <select id="col-sat-sel" onchange="renderColBars()">
+        <option>GEO_A</option>
+        <option>MEO_B</option>
+        <option>MEO_C</option>
+      </select>
+    </div>
+    <div class="col-bars" id="col-bars"></div>
+  </div>
+</div>
+
+<!-- ── Model Registry ── -->
+<div class="card" style="margin-bottom:20px">
+  <h2>Model Registry</h2>
+  <div style="overflow-x:auto">
+    <table id="reg-table">
+      <thead>
+        <tr>
+          <th>Satellite</th><th>Type</th><th>Trained at</th>
+          <th>Rows</th><th>SW_W avg</th><th>Restarts</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="reg-body">
+        <tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Pipeline overview ── -->
+<div class="card card-sm">
+  <h2>Pipeline Stages</h2>
+  <div style="display:flex;gap:0;overflow-x:auto;padding-bottom:4px;margin-top:6px">
+    <div id="stages-row" style="display:flex;gap:8px;min-width:max-content"></div>
+  </div>
+</div>
+
+</div><!-- /shell -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STATIC DATA — real results from your training run
+// Shown immediately; replaced by live API data when available
+// ═══════════════════════════════════════════════════════
+const STATIC = {
+  metrics: [
+    { satellite_id:"GEO_A", status:"warning", sw_w_avg:0.7865, drift_detected:true,
+      latency_sec:0.016, checked_at:"2026-10-04T02:14:06",
+      sw_cols:{x:0.8813, y:0.8211, z:0.8876, clock:0.5561},
+      rmse_cols:{x:14.0, y:19.8, z:10.5, clock:15.8},
+      satellite_type:"GEO", train_rows:86 },
+    { satellite_id:"MEO_B", status:"ok", sw_w_avg:0.9399, drift_detected:false,
+      latency_sec:0.007, checked_at:"2026-10-04T02:14:06",
+      sw_cols:{x:0.9401, y:0.9400, z:0.9758, clock:0.9036},
+      rmse_cols:{x:0.21, y:0.30, z:0.10, clock:0.30},
+      satellite_type:"MEO", train_rows:46 },
+    { satellite_id:"MEO_C", status:"warning", sw_w_avg:0.7622, drift_detected:true,
+      latency_sec:0.005, checked_at:"2026-10-04T02:14:06",
+      sw_cols:{x:0.8541, y:0.7439, z:0.7246, clock:0.7260},
+      rmse_cols:{x:0.24, y:0.21, z:0.17, clock:0.05},
+      satellite_type:"MEO", train_rows:143 },
+  ],
+  alerts: [
+    { alerted_at:"2026-10-04T02:24:04", satellite_id:"GEO_A", severity:"warning",
+      sw_w_avg:0.7865, drift_detected:true,
+      alert_reason:"SW_W < 0.85; KS drift detected", retrain_triggered:false },
+    { alerted_at:"2026-10-04T02:24:04", satellite_id:"MEO_C", severity:"warning",
+      sw_w_avg:0.7622, drift_detected:true,
+      alert_reason:"SW_W < 0.85; KS drift detected", retrain_triggered:false },
+  ],
+  registry: [
+    { satellite_id:"MEO_C", satellite_type:"MEO", trained_at:"2026-10-04T02:12:33",
+      train_rows:143, sw_w_avg:0.7621, n_restarts:8, status:"production" },
+    { satellite_id:"MEO_B", satellite_type:"MEO", trained_at:"2026-10-04T02:12:01",
+      train_rows:46,  sw_w_avg:0.9399, n_restarts:8, status:"production" },
+    { satellite_id:"GEO_A", satellite_type:"GEO", trained_at:"2026-10-04T02:11:50",
+      train_rows:86,  sw_w_avg:0.7865, n_restarts:8, status:"production" },
+  ]
+};
+
+const BENCHMARK = 0.9810;
+const API_BASE  = 'http://localhost:8000';
+let apiOnline   = false;
+let swChart     = null;
+
+// ═══════════════════════════════════════════════════════
+// CHART.JS — SW_W grouped bar chart
+// ═══════════════════════════════════════════════════════
+const COL_LABELS = ['x_error','y_error','z_error','clock_error'];
+const COL_SHORT  = ['X','Y','Z','Clock'];
+const SAT_COLORS = {
+  GEO_A: '#58a6ff',
+  MEO_B: '#3fb950',
+  MEO_C: '#e3b341',
+};
+
+function buildSwChart(data) {
+  const ctx = document.getElementById('swChart').getContext('2d');
+  if (swChart) swChart.destroy();
+
+  const datasets = data.map(m => ({
+    label: m.satellite_id,
+    data: [m.sw_cols.x, m.sw_cols.y, m.sw_cols.z, m.sw_cols.clock],
+    backgroundColor: SAT_COLORS[m.satellite_id] + 'cc',
+    borderColor:     SAT_COLORS[m.satellite_id],
+    borderWidth: 1,
+    borderRadius: 4,
+  }));
+
+  swChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: COL_SHORT, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 600 },
+      plugins: {
+        legend: { position:'top', labels:{ color:'#8b949e', font:{size:11}, boxWidth:10, padding:14 } },
+        tooltip: {
+          backgroundColor:'#1c2128', borderColor:'#30363d', borderWidth:1,
+          titleColor:'#e6edf3', bodyColor:'#8b949e', padding:10,
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(4)}`
+          }
+        },
+      },
+      scales: {
+        x: { grid:{color:'#21262d'}, ticks:{color:'#8b949e',font:{size:11}} },
+        y: {
+          min: 0.4, max: 1.0,
+          grid:{color:'#21262d'}, ticks:{color:'#8b949e',font:{size:11},
+            callback: v => v.toFixed(1)},
+          // benchmark line
+          afterDraw(chart) {
+            const {ctx, scales:{y}, chartArea:{left,right}} = chart;
+            const yPx = y.getPixelForValue(BENCHMARK);
+            ctx.save();
+            ctx.strokeStyle = '#e3b341';
+            ctx.lineWidth   = 1.5;
+            ctx.setLineDash([5,4]);
+            ctx.beginPath(); ctx.moveTo(left,yPx); ctx.lineTo(right,yPx); ctx.stroke();
+            ctx.fillStyle = '#e3b341';
+            ctx.font = '10px Inter,system-ui';
+            ctx.fillText(`Benchmark ${BENCHMARK}`, right-90, yPx-5);
+            ctx.restore();
+          }
+        },
+      },
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// STATUS TILES
+// ═══════════════════════════════════════════════════════
+function colorForSW(w) {
+  if (w >= 0.85) return 'var(--ok)';
+  if (w >= 0.70) return 'var(--warn)';
+  return 'var(--critical)';
+}
+
+function renderTiles(data) {
+  const row = document.getElementById('tiles-row');
+  row.innerHTML = data.map(m => {
+    const pct  = Math.min(100, (m.sw_w_avg / 1.0) * 100).toFixed(1);
+    const col  = colorForSW(m.sw_w_avg);
+    const bm   = (BENCHMARK * 100).toFixed(1);
+    return `
+    <div class="card tile ${m.status}">
+      <div class="tile-head">
+        <div>
+          <div class="sat-name">${m.satellite_id}</div>
+          <div class="sat-type">${m.satellite_type} · ${m.train_rows} train rows</div>
+        </div>
+        <span class="status-badge ${m.status}">${m.status}</span>
+      </div>
+      <div class="sw-row">
+        <span class="sw-val" style="color:${col}">${m.sw_w_avg.toFixed(4)}</span>
+        <span class="sw-label">SW_W avg</span>
+      </div>
+      <div class="gauge-track">
+        <div class="gauge-fill" style="width:${pct}%;background:${col}"></div>
+      </div>
+      <!-- benchmark tick -->
+      <div style="position:relative;height:4px;margin-bottom:10px">
+        <div style="position:absolute;left:${bm}%;width:2px;height:10px;top:-4px;
+          background:var(--warn);border-radius:1px"></div>
+      </div>
+      <div class="tile-meta">
+        <div class="meta-item">Drift <span>${m.drift_detected ? '⚠ YES' : '✓ no'}</span></div>
+        <div class="meta-item">Latency <span>${(m.latency_sec*1000).toFixed(0)}ms</span></div>
+        <div class="meta-item">Checked <span>${m.checked_at.slice(0,16).replace('T',' ')}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// PER-COLUMN BARS
+// ═══════════════════════════════════════════════════════
+function renderColBars() {
+  const sel  = document.getElementById('col-sat-sel').value;
+  const m    = STATIC.metrics.find(x => x.satellite_id === sel);
+  if (!m) return;
+  const vals = [
+    {name:'X error',     v:m.sw_cols.x,     rmse:m.rmse_cols.x},
+    {name:'Y error',     v:m.sw_cols.y,     rmse:m.rmse_cols.y},
+    {name:'Z error',     v:m.sw_cols.z,     rmse:m.rmse_cols.z},
+    {name:'Clock error', v:m.sw_cols.clock, rmse:m.rmse_cols.clock},
+  ];
+  const col  = SAT_COLORS[sel];
+  document.getElementById('col-bars').innerHTML = vals.map(r => {
+    const pct = (r.v * 100).toFixed(1);
+    const c   = colorForSW(r.v);
+    return `
+    <div class="col-row">
+      <span class="col-name">${r.name}</span>
+      <div class="col-track"><div class="col-fill" style="width:${pct}%;background:${c}"></div></div>
+      <span class="col-val" style="color:${c}">${r.v.toFixed(3)}</span>
+    </div>
+    <div style="font-size:10px;color:var(--muted);padding-left:86px;margin-top:-4px;margin-bottom:2px">
+      RMSE ${r.rmse}m
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// ALERT TIMELINE
+// ═══════════════════════════════════════════════════════
+function renderAlerts(alerts) {
+  const el = document.getElementById('alert-list');
+  if (!alerts.length) {
+    el.innerHTML = '<div style="color:var(--ok);font-size:12px">✓ No alerts — all satellites healthy</div>';
+    return;
+  }
+  el.innerHTML = alerts.map(a => `
+    <div class="alert-item ${a.severity}">
+      <div class="alert-icon">${a.severity==='critical'?'🔴':'⚠️'}</div>
+      <div class="alert-body">
+        <div class="alert-title">${a.satellite_id} — SW_W ${a.sw_w_avg.toFixed(4)}</div>
+        <div class="alert-detail">
+          ${a.alerted_at.slice(0,16).replace('T',' ')} UTC &nbsp;·&nbsp;
+          ${a.drift_detected ? 'Drift detected &nbsp;·&nbsp;' : ''}
+          ${a.retrain_triggered ? '🔄 Retrained' : 'No retrain'}<br>
+          ${a.alert_reason || ''}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// MODEL REGISTRY TABLE
+// ═══════════════════════════════════════════════════════
+function renderRegistry(rows) {
+  document.getElementById('reg-body').innerHTML = rows.map(r => `
+    <tr>
+      <td><strong>${r.satellite_id}</strong></td>
+      <td>${r.satellite_type}</td>
+      <td style="color:var(--muted);font-size:12px">${r.trained_at.slice(0,16).replace('T',' ')}</td>
+      <td>${r.train_rows}</td>
+      <td style="color:${colorForSW(r.sw_w_avg)};font-variant-numeric:tabular-nums">
+        ${r.sw_w_avg.toFixed(4)}</td>
+      <td>${r.n_restarts}</td>
+      <td><span class="badge ${r.status}">${r.status}</span></td>
+    </tr>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// PIPELINE STAGES
+// ═══════════════════════════════════════════════════════
+function renderStages() {
+  const stages = [
+    {n:1, name:'Ingestion',     desc:'SQLite seed + watch'},
+    {n:2, name:'Validation',    desc:'Pandera schema checks'},
+    {n:3, name:'Preprocessing', desc:'Scaler + t_min + winsorize'},
+    {n:4, name:'Retraining',    desc:'12 GP models + registry'},
+    {n:5, name:'API',           desc:'FastAPI /predict'},
+    {n:6, name:'Monitoring',    desc:'SW_W + KS drift'},
+    {n:7, name:'Alerting',      desc:'Email · Slack · console'},
+    {n:8, name:'Dashboard',     desc:'This page ← you are here', current:true},
+  ];
+  const row = document.getElementById('stages-row');
+  row.innerHTML = stages.map((s,i) => `
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="background:${s.current?'var(--accent)':'#1c2128'};
+        border:1px solid ${s.current?'var(--accent)':'var(--border)'};
+        border-radius:6px;padding:8px 12px;min-width:130px;
+        ${s.current?'box-shadow:0 0 12px #58a6ff44':''}">
+        <div style="font-size:11px;color:${s.current?'#0d1117':'var(--muted)'};
+          font-weight:600;margin-bottom:2px">Stage ${s.n}</div>
+        <div style="font-size:13px;font-weight:700;
+          color:${s.current?'#0d1117':'var(--text)'};">${s.name}</div>
+        <div style="font-size:10px;color:${s.current?'#0d111788':'var(--muted)'};">${s.desc}</div>
+      </div>
+      ${i < stages.length-1 ? '<span style="color:var(--muted);font-size:16px">→</span>' : ''}
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// LIVE PREDICTION (calls Stage 5 API)
+// ═══════════════════════════════════════════════════════
+async function runPrediction() {
+  const btn  = document.getElementById('pred-btn');
+  const sat  = document.getElementById('pred-sat').value;
+  const raw  = document.getElementById('pred-ts').value.trim();
+  const out  = document.getElementById('pred-output');
+
+  if (!raw) return;
+  const ts = raw.split('\n').map(s=>s.trim()).filter(Boolean);
+
+  btn.disabled = true;
+  btn.textContent = 'Predicting…';
+  out.innerHTML = '';
+
+  try {
+    const res = await fetch(`${API_BASE}/predict`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ satellite_id:sat, timestamps:ts }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+
+    const rows = data.predictions.map(p =>
+      `  ${p.utc_time.slice(0,16)}  x=${p.x_error.toFixed(4).padStart(8)}m  `+
+      `y=${p.y_error.toFixed(4).padStart(8)}m  z=${p.z_error.toFixed(4).padStart(8)}m  `+
+      `clk=${p.clock_error.toFixed(4).padStart(8)}m`
+    ).join('\n');
+
+    out.innerHTML = `<div class="pred-result">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+        ${data.satellite_id} · ${data.n_predictions} predictions · SW_W=${data.model_sw_w_avg}
+      </div>
+      <pre>${rows}</pre></div>`;
+
+  } catch(e) {
+    out.innerHTML = `<div class="error-msg">
+      API not reachable. Start the server first:<br>
+      <code>python mlops/stage5_api.py</code><br><br>
+      Error: ${e.message}
+    </div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Predict';
+  }
+}
+
+function clearPred() {
+  document.getElementById('pred-output').innerHTML = '';
+  document.getElementById('pred-ts').value = '';
+}
+
+// ═══════════════════════════════════════════════════════
+// API HEALTH CHECK
+// ═══════════════════════════════════════════════════════
+async function checkApi() {
+  const dot    = document.getElementById('api-dot');
+  const status = document.getElementById('api-status');
+  try {
+    const res  = await fetch(`${API_BASE}/health`, {signal:AbortSignal.timeout(3000)});
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    apiOnline = true;
+    dot.className    = 'dot live';
+    status.textContent = `API online · ${Object.keys(data.models_loaded).length} models loaded`;
+
+    // Refresh registry from live API
+    const regRes  = await fetch(`${API_BASE}/registry`);
+    const regData = await regRes.json();
+    if (regData.registry) renderRegistry(regData.registry);
+
+  } catch {
+    apiOnline = false;
+    dot.className    = 'dot';
+    status.textContent = 'API offline — showing cached data';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT + REFRESH
+// ═══════════════════════════════════════════════════════
+function renderAll(data) {
+  renderTiles(data.metrics);
+  buildSwChart(data.metrics);
+  renderAlerts(data.alerts);
+  renderRegistry(data.registry);
+  renderColBars();
+  renderStages();
+}
+
+async function refreshAll() {
+  renderAll(STATIC);   // always render static data first (instant)
+  await checkApi();    // then try to update from live API
+}
+
+// Boot
+document.addEventListener('DOMContentLoaded', () => {
+  refreshAll();
+  setInterval(checkApi, 30000);  // re-check API every 30s
+});
+</script>
+</body>
+</html>

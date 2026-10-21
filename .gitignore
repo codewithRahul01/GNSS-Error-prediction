@@ -52,3 +52,7 @@ results/phase7_self_test/
 # figures/*.png        (all plots)
 # README.md
 # .gitignore
+
+# GNSS temp download files
+mlops/database/*.gz
+mlops/database/BRDC*
