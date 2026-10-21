@@ -28,6 +28,7 @@ from urllib.error import URLError, HTTPError
 
 import numpy as np
 import pandas as pd
+import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -60,10 +61,7 @@ def setup_auth():
         log.error("Set EARTHDATA_USER and EARTHDATA_PASS env vars.")
         log.error("Register free at https://urs.earthdata.nasa.gov")
         sys.exit(1)
-    pm = HTTPPasswordMgrWithDefaultRealm()
-    pm.add_password(None, f"https://{EARTHDATA_HOST}", user, pwd)
-    handler = HTTPBasicAuthHandler(pm)
-    install_opener(build_opener(handler))
+    return user, pwd
 
 # ── URL builder ──────────────────────────────────────────────────────────────
 def cddis_url(date: datetime) -> str:
@@ -78,25 +76,38 @@ def cddis_url(date: datetime) -> str:
     return f"{CDDIS_BASE}/{yr4}/{doy:03d}/{yr2}p/{fname}", fname
 
 # ── download ─────────────────────────────────────────────────────────────────
-def download(url: str, dest: Path) -> Path:
+def download(url: str, dest: Path, user: str, pwd: str) -> Path:
+    """
+    CDDIS uses cookie-based OAuth redirect via urs.earthdata.nasa.gov.
+    requests with a Session handles the redirect + Basic Auth automatically.
+    """
     log.info(f"Downloading {url}")
+    session = requests.Session()
+    session.auth = (user, pwd)
+
     try:
-        req = Request(url, headers={"User-Agent": "GNSS-MLOps-Pipeline/1.0"})
-        with urlopen(req, timeout=120) as resp:
-            data = resp.read()
-        dest.write_bytes(data)
-        log.info(f"Saved {len(data)//1024} KB → {dest.name}")
+        resp = session.get(url, timeout=120, allow_redirects=True)
+
+        # detect HTML auth error page
+        if resp.headers.get("Content-Type", "").startswith("text/html"):
+            log.error("Got HTML response — auth failed or file not found")
+            log.error(f"HTTP {resp.status_code}: {url}")
+            if resp.status_code in (401, 403):
+                log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
+            elif resp.status_code == 404:
+                log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
+            else:
+                log.error(resp.text[:300])
+            sys.exit(1)
+
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+        log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
         return dest
-    except HTTPError as e:
-        log.error(f"HTTP {e.code}: {e.reason}  URL={url}")
-        if e.code == 401:
-            log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
-        if e.code == 404:
-            log.error("File not yet available (CDDIS publishes ~24h after UTC midnight)")
-        raise
-    except URLError as e:
-        log.error(f"Network error: {e.reason}")
-        raise
+
+    except requests.RequestException as e:
+        log.error(f"Network error: {e}")
+        sys.exit(1)
 
 # ── RINEX 3 parser (IRNSS nav) ───────────────────────────────────────────────
 def parse_rinex_irnss(raw_text: str, date: datetime) -> list[dict]:
@@ -328,12 +339,12 @@ def main():
         log.info("CSV already exists. Use --force to re-fetch.")
         return
 
-    setup_auth()
+    user, pwd = setup_auth()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # download compressed RINEX
     tmp_gz = ROOT / "mlops" / "database" / fname
-    download(url, tmp_gz)
+    download(url, tmp_gz, user, pwd)
 
     # decompress
     log.info("Decompressing…")
