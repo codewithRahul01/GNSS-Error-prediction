@@ -22,6 +22,7 @@ Satellite mapping (IRNSS PRN → your pipeline IDs):
 import sys, os, re, gzip, math, struct, hashlib, argparse, logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen, HTTPPasswordMgrWithDefaultRealm, \
     HTTPBasicAuthHandler, build_opener, install_opener
 from urllib.error import URLError, HTTPError
@@ -41,6 +42,8 @@ log = logging.getLogger("stage0")
 # ── constants ────────────────────────────────────────────────────────────────
 CDDIS_BASE   = "https://cddis.nasa.gov/archive/gnss/data/daily"
 EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+CDDIS_HOST = "cddis.nasa.gov"
+AUTH_REDIRECT_HOSTS = {CDDIS_HOST, EARTHDATA_HOST}
 
 # IRNSS PRN → your satellite_id
 SAT_MAP = {"I01": "GEO_A", "I04": "MEO_B", "I06": "MEO_C"}
@@ -76,13 +79,29 @@ def cddis_url(date: datetime) -> str:
     return f"{CDDIS_BASE}/{yr4}/{doy:03d}/{yr2}p/{fname}", fname
 
 # ── download ─────────────────────────────────────────────────────────────────
+class CDDISSession(requests.Session):
+    """
+    Preserve Authorization only for redirects between CDDIS and Earthdata hosts.
+    """
+    def rebuild_auth(self, prepared_request, response):
+        if "Authorization" not in prepared_request.headers:
+            return
+
+        original_host = (urlparse(response.request.url).hostname or "").lower()
+        redirect_host = (urlparse(prepared_request.url).hostname or "").lower()
+        if original_host in AUTH_REDIRECT_HOSTS and redirect_host in AUTH_REDIRECT_HOSTS:
+            return
+
+        return super().rebuild_auth(prepared_request, response)
+
+
 def download(url: str, dest: Path, user: str, pwd: str) -> Path:
     """
     CDDIS uses cookie-based OAuth redirect via urs.earthdata.nasa.gov.
-    requests with a Session handles the redirect + Basic Auth automatically.
+    Use a custom Session to preserve Basic Auth only across trusted redirects.
     """
     log.info(f"Downloading {url}")
-    session = requests.Session()
+    session = CDDISSession()
     session.auth = (user, pwd)
 
     try:
