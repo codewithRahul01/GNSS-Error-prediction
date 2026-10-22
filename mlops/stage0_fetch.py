@@ -19,7 +19,7 @@ Satellite mapping (IRNSS PRN → your pipeline IDs):
     I06 → MEO_C   (inclined geosynchronous)
 """
 
-import sys, os, re, gzip, math, struct, hashlib, argparse, logging
+import sys, os, re, gzip, math, struct, hashlib, argparse, logging, time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen, HTTPPasswordMgrWithDefaultRealm, \
@@ -85,29 +85,54 @@ def download(url: str, dest: Path, user: str, pwd: str) -> Path:
     session = requests.Session()
     session.auth = (user, pwd)
 
-    try:
-        resp = session.get(url, timeout=120, allow_redirects=True)
+    max_attempts = 4
+    backoff_seconds = 15
 
-        # detect HTML auth error page
-        if resp.headers.get("Content-Type", "").startswith("text/html"):
-            log.error("Got HTML response — auth failed or file not found")
-            log.error(f"HTTP {resp.status_code}: {url}")
-            if resp.status_code in (401, 403):
-                log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
-            elif resp.status_code == 404:
-                log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
-            else:
-                log.error(resp.text[:300])
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = session.get(url, timeout=120, allow_redirects=True)
+
+            # detect HTML auth/error page
+            if resp.headers.get("Content-Type", "").startswith("text/html"):
+                log.error("Got HTML response — auth failed or file not found")
+                log.error(f"HTTP {resp.status_code}: {url}")
+                if resp.status_code in (401, 403):
+                    log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
+                elif resp.status_code == 404:
+                    log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
+                else:
+                    log.error(resp.text[:300])
+                sys.exit(1)
+
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
+            return dest
+
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            retriable = status is not None and status >= 500 and attempt < max_attempts
+            if retriable:
+                wait = backoff_seconds * attempt
+                log.warning(
+                    f"HTTP {status} from CDDIS (attempt {attempt}/{max_attempts}); "
+                    f"retrying in {wait}s"
+                )
+                time.sleep(wait)
+                continue
+            log.error(f"Download failed: {e}")
             sys.exit(1)
-
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
-        log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
-        return dest
-
-    except requests.RequestException as e:
-        log.error(f"Network error: {e}")
-        sys.exit(1)
+        except requests.RequestException as e:
+            if attempt < max_attempts:
+                wait = backoff_seconds * attempt
+                log.warning(
+                    f"Network error on attempt {attempt}/{max_attempts}: {e}. "
+                    f"Retrying in {wait}s"
+                )
+                time.sleep(wait)
+                continue
+            log.error(f"Network error: {e}")
+            sys.exit(1)
 
 # ── RINEX 3 parser (IRNSS nav) ───────────────────────────────────────────────
 def parse_rinex_irnss(raw_text: str, date: datetime) -> list[dict]:
