@@ -35,12 +35,16 @@ jobs:
         run: pip install -r Requirements.txt
 
       - name: Stage 0 — Fetch daily RINEX from CDDIS
+        # NASA CDDIS may be unreachable from GitHub runners — failure is non-fatal
+        # Run stage0_fetch.py locally and push the CSV to Data/Raw/ instead
+        continue-on-error: true
         run: python3 mlops/stage0_fetch.py
         env:
           EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
           EARTHDATA_PASS: ${{ secrets.EARTHDATA_PASS }}
 
-      - name: Upload fetched CSV
+      - name: Upload fetched CSV (if available)
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: raw-data-today
@@ -73,7 +77,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r Requirements.txt
 
-      - name: Download fetched CSV
+      - name: Download fetched CSV (if available)
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: raw-data-today
