@@ -101,7 +101,7 @@ jobs:
       - name: Stage 1 — Ingest new CSV files
         id: ingest
         run: |
-          python3 mlops/stage1_ingestion.py --mode seed --data-dir Data/Raw
+          python3 mlops/stage1_ingestion.py --mode seed
           COUNT=$(python3 -c "
           import sqlite3, sys
           sys.path.insert(0,'.')

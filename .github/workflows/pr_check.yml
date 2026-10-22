@@ -22,7 +22,7 @@ jobs:
         run: pip install -r Requirements.txt
 
       - name: Seed test database
-        run: python3 mlops/stage1_ingestion.py --mode seed --data-dir Data/Raw
+        run: python3 mlops/stage1_ingestion.py --mode seed
 
       - name: Validate schema
         run: python3 mlops/stage2_validation.py
