@@ -22,6 +22,7 @@ Satellite mapping (IRNSS PRN → your pipeline IDs):
 import sys, os, re, gzip, math, struct, hashlib, argparse, logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen, HTTPPasswordMgrWithDefaultRealm, \
     HTTPBasicAuthHandler, build_opener, install_opener
 from urllib.error import URLError, HTTPError
@@ -29,6 +30,8 @@ from urllib.error import URLError, HTTPError
 import numpy as np
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -41,6 +44,10 @@ log = logging.getLogger("stage0")
 # ── constants ────────────────────────────────────────────────────────────────
 CDDIS_BASE   = "https://cddis.nasa.gov/archive/gnss/data/daily"
 EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+CDDIS_MIRRORS = (
+    "https://cddis.nasa.gov",
+    "https://gdc.cddis.eosdis.nasa.gov",
+)
 
 # IRNSS PRN → your satellite_id
 SAT_MAP = {"I01": "GEO_A", "I04": "MEO_B", "I06": "MEO_C"}
@@ -75,39 +82,78 @@ def cddis_url(date: datetime) -> str:
     fname = f"BRDC00IGS_R_{yr4}{doy:03d}0000_01D_MN.rnx.gz"
     return f"{CDDIS_BASE}/{yr4}/{doy:03d}/{yr2}p/{fname}", fname
 
+class SessionWithHeaderRedirection(requests.Session):
+    """Preserve auth headers across CDDIS <-> Earthdata redirects."""
+    AUTH_HOST = EARTHDATA_HOST
+
+    def rebuild_auth(self, prepared_request, response):
+        headers = prepared_request.headers
+        if "Authorization" not in headers:
+            return
+        original_host = urlparse(response.request.url).hostname
+        redirect_host = urlparse(prepared_request.url).hostname
+        if not original_host or not redirect_host:
+            return
+        same_host = original_host == redirect_host
+        earthdata_hop = {original_host, redirect_host} <= {"cddis.nasa.gov", self.AUTH_HOST, "gdc.cddis.eosdis.nasa.gov"}
+        if not same_host and not earthdata_hop:
+            del headers["Authorization"]
+
 # ── download ─────────────────────────────────────────────────────────────────
 def download(url: str, dest: Path, user: str, pwd: str) -> Path:
     """
     CDDIS uses cookie-based OAuth redirect via urs.earthdata.nasa.gov.
     requests with a Session handles the redirect + Basic Auth automatically.
     """
-    log.info(f"Downloading {url}")
-    session = requests.Session()
+    session = SessionWithHeaderRedirection()
     session.auth = (user, pwd)
+    session.headers.update({"User-Agent": "GNSS-Error-prediction/1.0"})
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=1.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
 
-    try:
-        resp = session.get(url, timeout=120, allow_redirects=True)
+    parsed = urlparse(url)
+    path = parsed.path.lstrip("/")
+    candidate_urls = [url]
+    for mirror in CDDIS_MIRRORS:
+        candidate = f"{mirror}/{path}"
+        if candidate not in candidate_urls:
+            candidate_urls.append(candidate)
 
-        # detect HTML auth error page
-        if resp.headers.get("Content-Type", "").startswith("text/html"):
-            log.error("Got HTML response — auth failed or file not found")
-            log.error(f"HTTP {resp.status_code}: {url}")
-            if resp.status_code in (401, 403):
-                log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
-            elif resp.status_code == 404:
-                log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
-            else:
-                log.error(resp.text[:300])
-            sys.exit(1)
+    for candidate_url in candidate_urls:
+        log.info(f"Downloading {candidate_url}")
+        try:
+            resp = session.get(candidate_url, timeout=120, allow_redirects=True)
 
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
-        log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
-        return dest
+            # detect HTML auth error page
+            if resp.headers.get("Content-Type", "").startswith("text/html"):
+                log.warning("Got HTML response — auth redirect failed or file not found")
+                log.warning(f"HTTP {resp.status_code}: {candidate_url}")
+                if resp.status_code in (401, 403):
+                    log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
+                    sys.exit(1)
+                if resp.status_code == 404:
+                    log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
+                    sys.exit(1)
+                continue
 
-    except requests.RequestException as e:
-        log.error(f"Network error: {e}")
-        sys.exit(1)
+            resp.raise_for_status()
+            dest.write_bytes(resp.content)
+            log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
+            return dest
+
+        except requests.RequestException as e:
+            log.warning(f"Network error from {candidate_url}: {e}")
+
+    log.error("Failed to download RINEX file from all CDDIS endpoints.")
+    sys.exit(1)
 
 # ── RINEX 3 parser (IRNSS nav) ───────────────────────────────────────────────
 def parse_rinex_irnss(raw_text: str, date: datetime) -> list[dict]:
