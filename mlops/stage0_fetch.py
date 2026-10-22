@@ -22,6 +22,7 @@ Satellite mapping (IRNSS PRN → your pipeline IDs):
 import sys, os, re, gzip, math, struct, hashlib, argparse, logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen, HTTPPasswordMgrWithDefaultRealm, \
     HTTPBasicAuthHandler, build_opener, install_opener
 from urllib.error import URLError, HTTPError
@@ -41,6 +42,7 @@ log = logging.getLogger("stage0")
 # ── constants ────────────────────────────────────────────────────────────────
 CDDIS_BASE   = "https://cddis.nasa.gov/archive/gnss/data/daily"
 EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+TRUSTED_AUTH_HOSTS = {"cddis.nasa.gov", EARTHDATA_HOST}
 
 # IRNSS PRN → your satellite_id
 SAT_MAP = {"I01": "GEO_A", "I04": "MEO_B", "I06": "MEO_C"}
@@ -76,31 +78,73 @@ def cddis_url(date: datetime) -> str:
     return f"{CDDIS_BASE}/{yr4}/{doy:03d}/{yr2}p/{fname}", fname
 
 # ── download ─────────────────────────────────────────────────────────────────
+class _TrustedRedirectSession(requests.Session):
+    """Preserve auth headers only across trusted CDDIS/Earthdata redirects."""
+    def rebuild_auth(self, prepared_request, response):
+        old_host = urlparse(response.request.url).hostname
+        new_host = urlparse(prepared_request.url).hostname
+        if old_host in TRUSTED_AUTH_HOSTS and new_host in TRUSTED_AUTH_HOSTS:
+            return
+        super().rebuild_auth(prepared_request, response)
+
+def _is_gzip_payload(content: bytes) -> bool:
+    return len(content) >= 2 and content[:2] == b"\x1f\x8b"
+
+def _looks_like_html(content: bytes) -> bool:
+    head = content[:512].lstrip().lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html")
+
+def _error_preview(content: bytes, max_chars: int = 300) -> str:
+    return content[:2048].decode("utf-8", errors="replace").strip()[:max_chars]
+
 def download(url: str, dest: Path, user: str, pwd: str) -> Path:
     """
     CDDIS uses cookie-based OAuth redirect via urs.earthdata.nasa.gov.
     requests with a Session handles the redirect + Basic Auth automatically.
     """
     log.info(f"Downloading {url}")
-    session = requests.Session()
+    session = _TrustedRedirectSession()
     session.auth = (user, pwd)
 
     try:
         resp = session.get(url, timeout=120, allow_redirects=True)
-
-        # detect HTML auth error page
-        if resp.headers.get("Content-Type", "").startswith("text/html"):
-            log.error("Got HTML response — auth failed or file not found")
-            log.error(f"HTTP {resp.status_code}: {url}")
-            if resp.status_code in (401, 403):
-                log.error("Check EARTHDATA_USER / EARTHDATA_PASS")
-            elif resp.status_code == 404:
-                log.error("File not yet available — CDDIS publishes ~24h after UTC midnight")
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            if resp.status_code == 404:
+                log.error(f"RINEX file not found on CDDIS (HTTP 404): {url}")
+                log.error("Verify date/DOY/path or retry later if daily publication is delayed.")
+            elif resp.status_code in (401, 403):
+                log.error(f"Earthdata authentication failed (HTTP {resp.status_code}) for {url}")
+                log.error("Verify EARTHDATA_USER / EARTHDATA_PASS and Earthdata CDDIS access.")
             else:
-                log.error(resp.text[:300])
+                log.error(f"HTTP {resp.status_code} while downloading {url}")
             sys.exit(1)
 
-        resp.raise_for_status()
+        content = resp.content
+        content_type = resp.headers.get("Content-Type", "").lower()
+        preview = _error_preview(content)
+        final_host = urlparse(resp.url).hostname or ""
+        if _looks_like_html(content) or "text/html" in content_type:
+            if final_host == EARTHDATA_HOST or "earthdata" in preview.lower() or "login" in preview.lower():
+                log.error("Authentication failed: received Earthdata login HTML page instead of RINEX gzip.")
+                log.error("Verify EARTHDATA_USER / EARTHDATA_PASS and confirm your Earthdata account can access CDDIS.")
+            elif "not found" in preview.lower() or "404" in preview.lower():
+                log.error(f"RINEX file appears missing on CDDIS for {url}")
+                log.error("Verify date/DOY/path or retry later if daily publication is delayed.")
+            else:
+                log.error("Unexpected HTML response from CDDIS/Earthdata; expected gzip RINEX content.")
+                if preview:
+                    log.error(preview)
+            sys.exit(1)
+
+        if not _is_gzip_payload(content):
+            log.error(f"Unexpected content type from CDDIS (Content-Type={content_type or 'unknown'})")
+            log.error("Expected a gzip-compressed RINEX file but received different content.")
+            if preview:
+                log.error(preview)
+            sys.exit(1)
+
         dest.write_bytes(resp.content)
         log.info(f"Saved {len(resp.content)//1024} KB → {dest.name}")
         return dest
