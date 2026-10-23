@@ -12,7 +12,7 @@
   "satellite_type": "GEO",
   "t_ref": "2025-09-03 00:01:00",
   "rows": 86,
-  "processed_at": "2026-10-23T02:19:20.121336+00:00",
+  "processed_at": "2026-10-23T02:47:39.138463+00:00",
   "scaler_path": "/home/runner/work/GNSS-Error-prediction/GNSS-Error-prediction/mlops/artifacts/scaler_geoa.pkl",
   "csv_path": "/home/runner/work/GNSS-Error-prediction/GNSS-Error-prediction/mlops/artifacts/train_geoa.csv"
 }
