@@ -67,42 +67,49 @@ def mirror_urls(date: datetime) -> list[tuple[str, str]]:
     doy  = date.timetuple().tm_yday
     fname = _filename(date)
 
-    # MGEX RINEX3 base path is same on all mirrors
     mgex_path = f"gnss/data/campaign/mgex/daily/rinex3/{yr4}/{doy:03d}/{yr2}p/{fname}"
 
     urls = [
+        # GSSC/ESA (Italy) — open, no auth, accessible from cloud runners
+        ("GSSC",
+         f"https://gssc.esa.int/products/data/daily/{yr4}/{doy:03d}/{fname}"),
+
         # BKG (Germany) — open, no auth
         ("BKG",
-         f"https://igs.bkg.bund.de/root_ftp/MGEX/BRDC/{yr4}/{doy:03d}/{fname}"),
-
-        # NASA CDDIS MGEX — requires Bearer token
-        ("CDDIS",
-         f"https://cddis.nasa.gov/archive/{mgex_path}"),
+         f"https://igs.bkg.bund.de/root_ftp/MGEX/BRDC/{yr4}/{doy:03d}/{yr2}p/{fname}"),
 
         # UNAVCO (USA) — open, no auth
         ("UNAVCO",
          f"https://data.unavco.org/archive/{mgex_path}"),
+
+        # NASA CDDIS MGEX — requires Bearer token (blocked on GitHub runners)
+        ("CDDIS",
+         f"https://cddis.nasa.gov/archive/{mgex_path}"),
     ]
     return urls
 
 # ── NASA Earthdata Bearer token (CDDIS fallback only) ───────────────────────
 def get_earthdata_token(user: str, pwd: str) -> str:
-    token_url = "https://urs.earthdata.nasa.gov/api/users/tokens"
-    resp = requests.get(token_url, auth=(user, pwd), timeout=30)
-    if resp.status_code == 200:
-        tokens = resp.json()
-        if tokens:
-            log.info("Using existing Earthdata token")
-            return tokens[0]["access_token"]
-    create_url = "https://urs.earthdata.nasa.gov/api/users/token"
-    resp = requests.post(create_url, auth=(user, pwd), timeout=30)
-    if resp.status_code in (200, 201):
-        token = resp.json().get("access_token", "")
-        if token:
-            log.info("Created new Earthdata token")
-            return token
-    log.error(f"Earthdata token failed: {resp.status_code} {resp.text[:200]}")
-    return ""
+    try:
+        token_url = "https://urs.earthdata.nasa.gov/api/users/tokens"
+        resp = requests.get(token_url, auth=(user, pwd), timeout=15)
+        if resp.status_code == 200:
+            tokens = resp.json()
+            if tokens:
+                log.info("Using existing Earthdata token")
+                return tokens[0]["access_token"]
+        create_url = "https://urs.earthdata.nasa.gov/api/users/token"
+        resp = requests.post(create_url, auth=(user, pwd), timeout=15)
+        if resp.status_code in (200, 201):
+            token = resp.json().get("access_token", "")
+            if token:
+                log.info("Created new Earthdata token")
+                return token
+        log.warning(f"Earthdata token failed: {resp.status_code}")
+        return ""
+    except requests.RequestException as e:
+        log.warning(f"Cannot reach urs.earthdata.nasa.gov (blocked on this runner): {e}")
+        return ""
 
 # ── download with mirror fallback ────────────────────────────────────────────
 def download(date: datetime, dest: Path) -> bool:
@@ -166,10 +173,8 @@ def download(date: datetime, dest: Path) -> bool:
         except requests.RequestException as e:
             log.warning(f"{label}: {e} — trying next mirror")
 
-    log.error("All mirrors failed. Cannot fetch data.")
-    log.error("Solutions:")
-    log.error("  1. Fetch locally: python3 mlops/stage0_fetch.py && git push")
-    log.error("  2. Set EARTHDATA_USER/PASS secrets for CDDIS fallback")
+    log.warning("All mirrors failed — pipeline will continue with existing data.")
+    log.warning("To add new data: run stage0_fetch.py locally and push the CSV.")
     return False
 
 # ── RINEX 3 parser ───────────────────────────────────────────────────────────
