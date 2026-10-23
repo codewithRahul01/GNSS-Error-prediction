@@ -25,7 +25,7 @@ jobs:
         run: python3 mlops/stage1_ingestion.py --mode seed
 
       - name: Validate schema
-        run: python3 mlops/stage2_validation.py
+        run: python3 mlops/stage2_validation.py --mode validate --file Data/Raw/$(ls Data/Raw/ | grep irnss | tail -1)
 
       - name: Preprocess
         run: python3 mlops/stage3_preprocessing.py

@@ -113,7 +113,7 @@ jobs:
           echo "Total rows in DB: $COUNT"
 
       - name: Stage 2 — Validate schema
-        run: python3 mlops/stage2_validation.py
+        run: python3 mlops/stage2_validation.py --mode validate --file Data/Raw/$(ls Data/Raw/ | grep irnss | tail -1)
 
       - name: Stage 3 — Preprocess
         run: python3 mlops/stage3_preprocessing.py
