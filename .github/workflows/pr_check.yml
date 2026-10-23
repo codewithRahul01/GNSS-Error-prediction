@@ -34,7 +34,7 @@ jobs:
         run: python3 mlops/stage4_retrain.py --mode run
 
       - name: Monitor
-        run: python3 mlops/stage6_monitoring.py run
+        run: python3 mlops/stage6_monitoring.py --mode run
 
       - name: Print status
-        run: python3 mlops/stage6_monitoring.py status
+        run: python3 mlops/stage6_monitoring.py --mode status

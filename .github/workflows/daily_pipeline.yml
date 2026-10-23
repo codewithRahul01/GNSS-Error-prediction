@@ -225,10 +225,10 @@ jobs:
           path: mlops/artifacts/
 
       - name: Stage 6 — Monitor quality
-        run: python3 mlops/stage6_monitoring.py run
+        run: python3 mlops/stage6_monitoring.py --mode run
 
       - name: Stage 7 — Send alerts (with auto-retrain if critical)
-        run: python3 mlops/stage7_alerting.py run --auto-retrain
+        run: python3 mlops/stage7_alerting.py --mode run --auto-retrain
         env:
           GNSS_EMAIL_FROM:   ${{ secrets.GNSS_EMAIL_FROM }}
           GNSS_EMAIL_TO:     ${{ secrets.GNSS_EMAIL_TO }}
@@ -239,7 +239,7 @@ jobs:
           GNSS_SLACK_WEBHOOK: ${{ secrets.GNSS_SLACK_WEBHOOK }}
 
       - name: Show monitoring summary
-        run: python3 mlops/stage6_monitoring.py status
+        run: python3 mlops/stage6_monitoring.py --mode status
 
   # ─────────────────────────────────────────────
   # JOB 4 — Commit models + DB back to repo
