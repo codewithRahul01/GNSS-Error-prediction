@@ -49,36 +49,39 @@ DATA_DIR = ROOT / "Data" / "Raw"
 
 # ── URL builders for each mirror ─────────────────────────────────────────────
 def _filename(date: datetime) -> str:
+    """
+    MGEX combined broadcast file from DLR — includes NavIC/IRNSS.
+    Standard IGS file (BRDC00IGS_R) does NOT reliably include IRNSS.
+    """
     yr4 = date.strftime("%Y")
     doy = date.timetuple().tm_yday
-    return f"BRDC00IGS_R_{yr4}{doy:03d}0000_01D_MN.rnx.gz"
+    return f"BRDM00DLR_S_{yr4}{doy:03d}0000_01D_MN.rnx.gz"
 
 def mirror_urls(date: datetime) -> list[tuple[str, str]]:
     """
     Returns list of (label, url) to try in order.
-    All point to the same IGS combined broadcast ephemeris file.
+    All use the MGEX mixed broadcast file which contains IRNSS records.
     """
     yr4  = date.strftime("%Y")
     yr2  = date.strftime("%y")
     doy  = date.timetuple().tm_yday
     fname = _filename(date)
 
+    # MGEX RINEX3 base path is same on all mirrors
+    mgex_path = f"gnss/data/campaign/mgex/daily/rinex3/{yr4}/{doy:03d}/{yr2}p/{fname}"
+
     urls = [
-        # BKG (Germany) — open, no auth, reliable from GitHub runners
+        # BKG (Germany) — open, no auth
         ("BKG",
-         f"https://igs.bkg.bund.de/root_ftp/IGS/BRDC/{yr4}/{doy:03d}/{fname}"),
+         f"https://igs.bkg.bund.de/root_ftp/MGEX/BRDC/{yr4}/{doy:03d}/{fname}"),
+
+        # NASA CDDIS MGEX — requires Bearer token
+        ("CDDIS",
+         f"https://cddis.nasa.gov/archive/{mgex_path}"),
 
         # UNAVCO (USA) — open, no auth
         ("UNAVCO",
-         f"https://data.unavco.org/archive/gnss/products/brdcfile/{yr4}/{doy:03d}/{fname}"),
-
-        # IGN (France) — open, no auth
-        ("IGN",
-         f"https://igs.ign.fr/pub/igs/data/campaign/mgex/daily/rinex3/{yr4}/{doy:03d}/{yr2}p/{fname}"),
-
-        # NASA CDDIS — requires Bearer token (fallback only)
-        ("CDDIS",
-         f"https://cddis.nasa.gov/archive/gnss/data/daily/{yr4}/{doy:03d}/{yr2}p/{fname}"),
+         f"https://data.unavco.org/archive/{mgex_path}"),
     ]
     return urls
 
@@ -130,7 +133,7 @@ def download(date: datetime, dest: Path) -> bool:
                 continue
 
         try:
-            resp = requests.get(url, headers=headers, timeout=120, allow_redirects=True)
+            resp = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
 
             # detect HTML error page (auth redirect or 404 page)
             ct = resp.headers.get("Content-Type", "")
