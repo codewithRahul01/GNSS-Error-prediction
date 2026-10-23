@@ -167,8 +167,7 @@ jobs:
           path: mlops/artifacts/
 
       - name: Stage 4 — Retrain
-        run: |
-          GNSS_MODEL_TYPE=${{ env.GNSS_MODEL_TYPE }} python3 mlops/stage4_retrain.py
+        run: python3 mlops/stage4_retrain.py --mode run
         env:
           GNSS_MODEL_TYPE: ${{ env.GNSS_MODEL_TYPE }}
 

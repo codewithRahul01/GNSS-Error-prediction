@@ -31,7 +31,7 @@ jobs:
         run: python3 mlops/stage3_preprocessing.py --mode run
 
       - name: Retrain (quick smoke test)
-        run: python3 mlops/stage4_retrain.py
+        run: python3 mlops/stage4_retrain.py --mode run
 
       - name: Monitor
         run: python3 mlops/stage6_monitoring.py run
