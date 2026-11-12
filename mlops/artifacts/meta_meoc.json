@@ -12,7 +12,7 @@
   "satellite_type": "MEO",
   "t_ref": "2025-09-03 10:11:00",
   "rows": 143,
-  "processed_at": "2026-11-12T00:56:02.271380+00:00",
+  "processed_at": "2026-11-12T23:45:09.916921+00:00",
   "scaler_path": "/home/runner/work/GNSS-Error-prediction/GNSS-Error-prediction/mlops/artifacts/scaler_meoc.pkl",
   "csv_path": "/home/runner/work/GNSS-Error-prediction/GNSS-Error-prediction/mlops/artifacts/train_meoc.csv"
 }
